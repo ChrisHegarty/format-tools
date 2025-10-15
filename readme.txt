@@ -54,6 +54,8 @@ curl -X PUT "http://localhost:9200/vecs" -H 'Content-Type: application/json' -d 
 }' | jq
 
 # Index the data
+Usage: java BulkJSONLoadGenerator <esUrl> <indexName> <bulkSize> <indexingThreads> <filePath>
+
 java -cp "libs/*:libs" org.chegar.BulkJSONLoadGenerator \
  http://localhost:9200 vecs 500 8 ~/data/open_ai_corpus-parallel-indexing_emb_only.json
 
