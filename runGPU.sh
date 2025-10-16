@@ -33,7 +33,7 @@ java -cp "libs/*:libs" org.chegar.BulkJSONLoadGenerator \
 # Gets the number of segments
 curl -s "http://localhost:9200/vecs/_segments" | jq | grep segments
 
-# Force merge to 3 segments
+# Force merge to 1 segments
 date
 time curl -X POST "http://localhost:9200/vecs/_forcemerge?max_num_segments=1" \
     -H 'Content-Type: application/json'
