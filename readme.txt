@@ -34,7 +34,8 @@ curl -X PUT "http://localhost:9200/vecs" -H 'Content-Type: application/json' -d 
   "settings": {
     "index.store.preload": [ "vec", "vex", "vem", "veq", "veqm", "veb", "vebm"],
     "index.number_of_shards": 1,
-    "index.number_of_replicas": 0
+    "index.number_of_replicas": 0,
+    "index.vectors.indexing.use_gpu": true
   },
   "mappings": {
     "dynamic": false,
@@ -57,7 +58,7 @@ curl -X PUT "http://localhost:9200/vecs" -H 'Content-Type: application/json' -d 
 Usage: java BulkJSONLoadGenerator <esUrl> <indexName> <bulkSize> <indexingThreads> <filePath>
 
 java -cp "libs/*:libs" org.chegar.BulkJSONLoadGenerator \
- http://localhost:9200 vecs 500 8 ~/data/open_ai_corpus-parallel-indexing_emb_only.json
+ http://localhost:9200 vecs 500 8 ~/data/open_ai_corpus-initial-indexing_emb_only.json
 
 # Refresh to sure that the in-memory buffers are flushed
 curl -X POST "http://localhost:9200/vecs/_refresh" | jq
@@ -65,6 +66,54 @@ curl -X POST "http://localhost:9200/vecs/_refresh" | jq
 # checkout the vector count
 curl -X GET "http://localhost:9200/_cluster/stats?filter_path=indices.field_stats,indices.indexing,indices.docs,indices.mappings&pretty"
 
+--------
 
 
-```
+OpenAI dataset
+
+$ date; wc -l open_ai_corpus-initial-indexing.json; date
+Thu Oct 16 09:56:49 UTC 2025
+2580961 open_ai_corpus-initial-indexing.json
+Thu Oct 16 10:12:58 UTC 2025
+
+
+-rw-rw-r--  1 ubuntu ubuntu  85G Nov 14  2023 open_ai_corpus-initial-indexing.json
+-rw-rw-r--  1 ubuntu ubuntu  79G Oct 16 10:19 open_ai_corpus-initial-indexing_emb_only.json
+
+
+----
+# Test that the GPU is setup correctly
+
+curl -X DELETE "http://localhost:9200/vecs" | jq
+
+curl -X PUT "http://localhost:9200/vecs" -H 'Content-Type: application/json' -d '{
+  "settings": {
+    "index.store.preload": [ "vec", "vex", "vem", "veq", "veqm", "veb", "vebm"],
+    "index.number_of_shards": 1,
+    "index.number_of_replicas": 0,
+    "index.vectors.indexing.use_gpu": true
+  },
+  "mappings": {
+    "dynamic": false,
+    "properties": {
+      "emb": {
+        "type": "dense_vector",
+        "element_type": "float",
+        "index": true,
+        "index_options": {
+          "type": "hnsw"
+        }
+      }
+    }
+  }
+}' | jq
+
+Try just three
+curl -X POST "http://localhost:9200/vecs/_bulk?refresh=wait_for" -H "Content-Type: application/json" -d '
+{ "index": {} }
+{ "emb": [0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1]}
+{ "index": {} }
+{ "emb": [0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2]}
+{ "index": {} }
+{ "emb": [0.3, 0.3, 0.3, 0.3, 0.3, 0.3, 0.3, 0.3, 0.3, 0.3, 0.3, 0.3, 0.3, 0.3, 0.3, 0.3, 0.3, 0.3, 0.3, 0.3, 0.3, 0.3, 0.3, 0.3]}
+' | jq
