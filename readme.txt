@@ -35,7 +35,7 @@ curl -X PUT "http://localhost:9200/vecs" -H 'Content-Type: application/json' -d 
     "index.store.preload": [ "vec", "vex", "vem", "veq", "veqm", "veb", "vebm"],
     "index.number_of_shards": 1,
     "index.number_of_replicas": 0,
-    "index.vectors.indexing.use_gpu": true
+    "index.vectors.indexing.use_gpu": false
   },
   "mappings": {
     "dynamic": false,
@@ -80,6 +80,25 @@ Thu Oct 16 10:12:58 UTC 2025
 -rw-rw-r--  1 ubuntu ubuntu  85G Nov 14  2023 open_ai_corpus-initial-indexing.json
 -rw-rw-r--  1 ubuntu ubuntu  79G Oct 16 10:19 open_ai_corpus-initial-indexing_emb_only.json
 
+
+----
+Enable logging:
+
+curl -X PUT "http://localhost:9200/_cluster/settings"   -H "Content-Type: application/json"   -d '{
+  "transient": {
+    "logger.org.elasticsearch.xpack.gpu.codec.ES92GpuHnswVectorsWriter": "DEBUG"
+  }
+}' | jq
+
+# Gets the number of segments
+curl -s "http://localhost:9200/vecs/_segments" \
+| jq '.indices.vecs.shards[][] | {shard: .shard, segments: .num_search_segments}'
+
+
+
+# Force merge to 3 segments
+curl -X POST "http://localhost:9200/vecs/_forcemerge?max_num_segments=3" \
+     -H 'Content-Type: application/json'
 
 ----
 # Test that the GPU is setup correctly
