@@ -2,11 +2,11 @@ package org.chegar;
 
 import java.io.*;
 import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.nio.file.Files;
-import java.nio.file.Path;
+import java.net.http.*;
+import java.nio.channels.Channels;
+import java.nio.channels.FileChannel;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.*;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -28,8 +28,8 @@ public class BulkJSONLoadGenerator {
     private static final AtomicLong TOTAL_FAILED_BULKS = new AtomicLong(0);
     private static final AtomicLong TOTAL_BYTES_SENT = new AtomicLong(0);
 
-    // Record for bulk range
-    public record BulkRange(long startLine, long lineCount) {}
+    // Represent a byte range in the file
+    public record ByteRange(long startByte, long endByte) {}
 
     public static void main(String[] args) throws Exception {
         if (args.length != 5) {
@@ -43,14 +43,17 @@ public class BulkJSONLoadGenerator {
         int numThreads = Integer.parseInt(args[3]);
         Path filePath = Path.of(args[4]);
 
-        long totalDocs = countLines(filePath);
-        List<BulkRange> ranges = partitionLines(totalDocs, numThreads);
+        long fileSize = Files.size(filePath);
+        List<ByteRange> ranges = partitionFileByBytes(filePath, numThreads);
 
         System.out.printf(
-                "Starting load: totalDocs=%,d, threads=%d, bulkSize=%d, file=%s%n",
-                totalDocs, numThreads, bulkSize, filePath
+                "Starting load: fileSize=%,d bytes, threads=%d, bulkSize=%d, file=%s%n",
+                fileSize, numThreads, bulkSize, filePath
         );
-        ranges.forEach(r -> System.out.printf("Range start=%d count=%d%n", r.startLine(), r.lineCount()));
+        for (int i = 0; i < ranges.size(); i++) {
+            var r = ranges.get(i);
+            System.out.printf("Thread-%d: byteStart=%,d byteEnd=%,d%n", i, r.startByte(), r.endByte());
+        }
 
         CountDownLatch readyLatch = new CountDownLatch(numThreads);
         CountDownLatch startLatch = new CountDownLatch(1);
@@ -59,11 +62,11 @@ public class BulkJSONLoadGenerator {
 
         for (int i = 0; i < numThreads; i++) {
             final int threadId = i;
-            BulkRange range = ranges.get(i);
+            ByteRange range = ranges.get(i);
 
             Thread t = new Thread(() -> {
                 try {
-                    processChunk(esUrl, indexName, filePath, range.startLine(), range.lineCount(),
+                    processChunk(esUrl, indexName, filePath, range.startByte(), range.endByte(),
                             bulkSize, readyLatch, startLatch);
                 } catch (Exception e) {
                     System.err.printf("Thread-%d failed: %s%n", threadId, e.getMessage());
@@ -73,16 +76,18 @@ public class BulkJSONLoadGenerator {
             threads.add(t);
         }
 
-        ScheduledExecutorService reporter = Executors.newSingleThreadScheduledExecutor();
-        reporter.scheduleAtFixedRate(() ->
-                        System.out.printf("Progress: %,d docs sent%n", TOTAL_DOCS_SENT.get()),
-                5, 5, TimeUnit.SECONDS);
-
         // Start threads
         threads.forEach(Thread::start);
 
         // Wait until all are ready (skipped to start)
         readyLatch.await();
+
+        // start the progress reporter
+        ScheduledExecutorService reporter = Executors.newSingleThreadScheduledExecutor();
+        reporter.scheduleAtFixedRate(() ->
+                        System.out.printf("Progress: %,d docs sent%n", TOTAL_DOCS_SENT.get()),
+                5, 5, TimeUnit.SECONDS);
+
         System.out.println("All threads ready — releasing start latch!");
         long start = System.nanoTime();
         startLatch.countDown();
@@ -93,33 +98,36 @@ public class BulkJSONLoadGenerator {
         reporter.shutdownNow();
 
         double elapsedSec = (System.nanoTime() - start) / 1_000_000_000.0;
-        printSummary(totalDocs, elapsedSec);
+        printSummary(elapsedSec);
     }
 
     static void processChunk(String esUrl, String indexName, Path path,
-                                     long startLine, long docCount, int bulkSize,
-                                     CountDownLatch readyLatch, CountDownLatch startLatch)
+                             long startByte, long endByte, int bulkSize,
+                             CountDownLatch readyLatch, CountDownLatch startLatch)
             throws IOException, InterruptedException {
 
-        try (BufferedReader reader = Files.newBufferedReader(path, UTF_8)) {
+        try (FileChannel channel = FileChannel.open(path, StandardOpenOption.READ);
+             InputStream in = Channels.newInputStream(channel);
+             BufferedReader reader = new BufferedReader(new InputStreamReader(in, UTF_8), 128 * 1024)) {
 
-            // Skip lines until we reach our starting point
-            for (long i = 0; i < startLine; i++) {
-                if (reader.readLine() == null)
-                    throw new EOFException("File ended before startLine " + startLine);
-            }
+            // Seek to the start of our range
+            channel.position(startByte);
 
-            // Signal ready
+            // If not at start, discard the first partial line
+            if (startByte > 0) reader.readLine();
+
             readyLatch.countDown();
-
-            // Wait for latch release (all threads aligned)
             startLatch.await();
 
             ByteArrayOutputStream baos = new ByteArrayOutputStream(16384);
             String line;
             int count = 0;
+            long approxPos = startByte;
 
-            while ((line = reader.readLine()) != null && docCount-- > 0) {
+            while ((line = reader.readLine()) != null) {
+                approxPos += line.getBytes(StandardCharsets.UTF_8).length + 1;
+                if (approxPos >= endByte) break;
+
                 baos.write(INDEX_LINE);
                 baos.write(line.getBytes(UTF_8));
                 baos.write('\n');
@@ -158,26 +166,21 @@ public class BulkJSONLoadGenerator {
         }
     }
 
-    static long countLines(Path path) throws IOException {
-        try (var lines = Files.lines(path)) {
-            return lines.count();
-        }
-    }
+    static List<ByteRange> partitionFileByBytes(Path path, int numThreads) throws IOException {
+        long fileSize = Files.size(path);
+        long chunkSize = fileSize / numThreads;
 
-    static List<BulkRange> partitionLines(long totalLines, int numThreads) {
-        long perThread = totalLines / numThreads;
-        long remainder = totalLines % numThreads;
-        List<BulkRange> list = new ArrayList<>(numThreads);
-        long current = 0;
+        List<ByteRange> list = new ArrayList<>(numThreads);
+        long start = 0;
         for (int i = 0; i < numThreads; i++) {
-            long count = perThread + (i == numThreads - 1 ? remainder : 0);
-            list.add(new BulkRange(current, count));
-            current += count;
+            long end = (i == numThreads - 1) ? fileSize : start + chunkSize;
+            list.add(new ByteRange(start, end));
+            start = end;
         }
         return list;
     }
 
-    static void printSummary(long totalDocs, double elapsedSec) {
+    static void printSummary(double elapsedSec) {
         System.out.println("\n=== Bulk Load Summary ===");
         System.out.printf("Total docs sent: %,d%n", TOTAL_DOCS_SENT.get());
         System.out.printf("Total failed bulks: %,d%n", TOTAL_FAILED_BULKS.get());

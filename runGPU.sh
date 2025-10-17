@@ -26,17 +26,22 @@ curl -X PUT "http://localhost:9200/vecs" -H 'Content-Type: application/json' -d 
   }
 }' | jq
 
+curl -X PUT "http://localhost:9200/_cluster/settings"   -H "Content-Type: application/json"   -d '{
+  "transient": {
+    "logger.org.elasticsearch.xpack.gpu.codec.ES92GpuHnswVectorsWriter": "DEBUG"
+  }
+}' | jq
+
 # Index the data
 java -cp "libs/*:libs" org.chegar.BulkJSONLoadGenerator \
- http://localhost:9200 vecs 500 8 ~/data/open_ai_corpus-initial-indexing_emb_only_1M.json
+ http://localhost:9200 vecs 500 8 /home/ubuntu/.rally/benchmarks/data/openai-initial-indexing/open_ai_corpus-initial-indexing_emb_only.json
 
 # Gets the number of segments
 curl -s "http://localhost:9200/vecs/_segments" | jq | grep segments
 
-# Force merge to 1 segments
+# Force merge to 3 segments
 date
-time curl -X POST "http://localhost:9200/vecs/_forcemerge?max_num_segments=1" \
-    -H 'Content-Type: application/json'
+time curl -X POST "http://localhost:9200/vecs/_forcemerge?max_num_segments=3"
 date
 
 curl -s "http://localhost:9200/vecs/_segments" | jq | grep segments
