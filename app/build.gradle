@@ -37,5 +37,15 @@ java {
 
 application {
     // Define the main class for the application.
-    mainClass = 'org.example.App'
+    mainClass = 'org.chegar.BulkJSONLoadGenerator'
+}
+
+task strip(type:JavaExec) {
+   main = 'org.chegar.OpenAIStripFields'
+   classpath = sourceSets.main.runtimeClasspath
+   def cmdargs = ""
+   if (project.hasProperty("args")) {
+      cmdargs = project.getProperty("args")
+   }
+   args cmdargs.split()
 }
