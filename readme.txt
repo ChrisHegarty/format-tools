@@ -12,9 +12,14 @@ wget https://repo1.maven.org/maven2/org/lz4/lz4-java/1.8.0/lz4-java-1.8.0.jar
 
 javac -cp "libs/*" -d libs `find app/src/main/java/ -name "*.java"`
 
-# I use this to stip the other fields from the dataset, but could just ignore them in the mapping.
+# I use this to strip the other fields from the dataset, but could just ignore them in the mapping.
 
 java -cp "libs/*:libs" org.chegar.OpenAIStripFields \
+ ~/data/open_ai_corpus-parallel-indexing.json \
+ ~/data/open_ai_corpus-parallel-indexing_emb_only.json
+
+ # Or, using gradle
+./gradlew :app:strip  \
  ~/data/open_ai_corpus-parallel-indexing.json \
  ~/data/open_ai_corpus-parallel-indexing_emb_only.json
 
@@ -59,6 +64,9 @@ Usage: java BulkJSONLoadGenerator <esUrl> <indexName> <bulkSize> <indexingThread
 
 java -cp "libs/*:libs" org.chegar.BulkJSONLoadGenerator \
  http://localhost:9200 vecs 500 8 ~/data/open_ai_corpus-initial-indexing_emb_only.json
+
+# Or, using gradle
+./gradlew :app:run http://localhost:9200 vecs 500 8 ~/data/open_ai_corpus-initial-indexing_emb_only.json
 
 # Refresh to sure that the in-memory buffers are flushed
 curl -X POST "http://localhost:9200/vecs/_refresh" | jq
