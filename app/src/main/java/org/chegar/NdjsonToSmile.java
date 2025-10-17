@@ -50,9 +50,6 @@ public class NdjsonToSmile {
                 if (count % 100_000 == 0) {
                     System.out.println("lines processed " + count);
                 }
-                if (count == 10_000_000L) {
-                    break;
-                }
             }
         }
         System.out.println("Conversion complete:" + count + ",  output written to " + outputPath);
