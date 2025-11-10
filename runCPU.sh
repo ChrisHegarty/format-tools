@@ -8,6 +8,7 @@ curl -X PUT "http://localhost:9200/vecs" -H 'Content-Type: application/json' -d 
     "index.number_of_shards": 1,
     "index.number_of_replicas": 0,
     "index.refresh_interval": -1,
+    "index.merge.scheduler.auto_throttle": false,
     "index.vectors.indexing.use_gpu": false
   },
   "mappings": {

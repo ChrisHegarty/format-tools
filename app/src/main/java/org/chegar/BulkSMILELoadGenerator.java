@@ -3,6 +3,7 @@ package org.chegar;
 import java.io.*;
 import java.net.URI;
 import java.net.http.*;
+import java.nio.ByteBuffer;
 import java.nio.channels.Channels;
 import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
@@ -16,14 +17,23 @@ import java.util.concurrent.atomic.AtomicLong;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 // For OpenAI dataset, but maybe more.
-public class BulkJSONLoadGenerator {
+public class BulkSMILELoadGenerator {
 
     static final HttpClient CLIENT = HttpClient.newBuilder()
             .version(HttpClient.Version.HTTP_1_1)
             .connectTimeout(Duration.ofSeconds(10))
             .build();
 
-    static final byte[] INDEX_LINE = "{\"index\":{}}\n".getBytes(UTF_8);
+    // Precomputed length-prefixed Smile index action line, {"index":{}}
+    private static final byte[] INDEX_ACTION_LINE = new byte[]{
+            (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x0E, // 14 bytes
+            (byte) 0x3A,(byte)  0x29, (byte) 0x0A, (byte) 0x01, // smile header
+            (byte) 0xFA, // START_OBJECT (root)
+            (byte) 0x84, 0x69, 0x6E, 0x64, 0x65, 0x78, // short field-name token (A4) + ASCII "index"
+            (byte) 0xFA, (byte) 0xFB, // START_OBJECT (value) then END_OBJECT (empty object)
+            (byte) 0xFB //END_OBJECT (root)
+    };
+
     static final AtomicLong TOTAL_DOCS_SENT = new AtomicLong(0);
     private static final AtomicLong TOTAL_FAILED_BULKS = new AtomicLong(0);
     private static final AtomicLong TOTAL_BYTES_SENT = new AtomicLong(0);
@@ -33,7 +43,7 @@ public class BulkJSONLoadGenerator {
 
     public static void main(String[] args) throws Exception {
         if (args.length != 5) {
-            System.err.println("Usage: java BulkJSONLoadGenerator <esUrl> <indexName> <bulkSize> <indexingThreads> <filePath>");
+            System.err.println("Usage: java BulkSMILELoadGenerator <esUrl> <indexName> <bulkSize> <indexingThreads> <filePath>");
             System.exit(1);
         }
 
@@ -120,18 +130,42 @@ public class BulkJSONLoadGenerator {
             startLatch.await();
 
             ByteArrayOutputStream baos = new ByteArrayOutputStream(16384);
-            String line;
+            DataOutputStream out = new DataOutputStream(baos);
             int count = 0;
             long approxPos = startByte;
 
-            while ((line = reader.readLine()) != null) {
+            for (int i = 0; i < range.docCount(); i++) {
+
+            }
+
+                while ((line = reader.readLine()) != null) {
                 approxPos += line.getBytes(StandardCharsets.UTF_8).length + 1;
                 if (approxPos >= endByte) break;
 
-                baos.write(INDEX_LINE);
-                baos.write(line.getBytes(UTF_8));
-                baos.write('\n');
-                count++;
+                // Write precomputed index action line
+                baos.write(INDEX_ACTION_LINE);
+
+                // Read 4-byte length
+                ByteBuffer lenBuf = ByteBuffer.allocate(4);
+                channel.read(lenBuf, pos);
+                lenBuf.flip();
+                int docLen = lenBuf.getInt();
+
+                // Read Smile document
+                ByteBuffer docBuf = ByteBuffer.allocate(docLen);
+                channel.read(docBuf, pos + 4);
+                docBuf.flip();
+
+                // Write length + document
+                out.writeInt(docLen);
+                out.write(docBuf.array());
+
+                pos += 4L + docLen;
+
+//                baos.write(INDEX_ACTION_LINE);
+//                baos.write(line.getBytes(UTF_8));
+//                baos.write('\n');
+//                count++;
 
                 if (count == bulkSize) {
                     sendBulk(esUrl, indexName, baos.toByteArray(), count);
